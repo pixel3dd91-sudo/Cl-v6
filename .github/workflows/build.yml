@@ -8,16 +8,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Unzip project
+      - name: Find and unzip project
         run: |
-          unzip -q "$(ls *.zip | head -1)"
-          ls -la CarDash
+          mkdir -p _src
+          found=""
+          for z in *.zip; do
+            [ -f "$z" ] || continue
+            if unzip -l "$z" | grep -q "DashboardActivity.kt"; then found="$z"; fi
+          done
+          if [ -z "$found" ]; then
+            echo "No project zip found in repository root. Files here:"
+            ls -la
+            exit 1
+          fi
+          echo "Using zip: $found"
+          unzip -q -o "$found" -d _src
+          settings=$(find _src -maxdepth 4 -name settings.gradle | head -1)
+          if [ -z "$settings" ]; then echo "settings.gradle not found inside zip"; exit 1; fi
+          proj=$(dirname "$settings")
+          echo "PROJ=$GITHUB_WORKSPACE/$proj" >> "$GITHUB_ENV"
+          echo "Project dir: $proj"
+          ls -la "$proj"
 
       - name: Download Persian fonts
-        working-directory: CarDash
         run: |
-          mkdir -p app/src/main/assets/fonts
-          cd app/src/main/assets/fonts
+          mkdir -p "$PROJ/app/src/main/assets/fonts"
+          cd "$PROJ/app/src/main/assets/fonts"
           dl() {
             out="$1"; shift
             for u in "$@"; do
@@ -50,17 +66,17 @@ jobs:
           gradle-version: 8.2
 
       - name: Build APK
-        working-directory: CarDash
         shell: bash
         run: |
           set -o pipefail
+          cd "$PROJ"
           gradle assembleDebug --no-daemon --console=plain 2>&1 | tee build.log
 
       - name: Show build errors
         if: failure()
-        working-directory: CarDash
         shell: bash
         run: |
+          cd "$PROJ" 2>/dev/null || exit 0
           {
             grep -E '^e: ' build.log | sed -E 's#file:///home/runner/work/[^/]+/[^/]+/##' | head -40
             grep -A8 'What went wrong' build.log | head -20
@@ -74,9 +90,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-log
-          path: CarDash/build.log
+          path: ${{ env.PROJ }}/build.log
 
       - uses: actions/upload-artifact@v4
         with:
           name: CarDash-APK
-          path: CarDash/app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ env.PROJ }}/app/build/outputs/apk/debug/app-debug.apk
